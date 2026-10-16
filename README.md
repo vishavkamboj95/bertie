@@ -3,7 +3,7 @@
 [![tests](https://github.com/vishavkamboj95/bertie/actions/workflows/test.yml/badge.svg)](https://github.com/vishavkamboj95/bertie/actions/workflows/test.yml)
 [![license: MIT](https://img.shields.io/github/license/vishavkamboj95/bertie)](LICENSE)
 
-**A butler for your Google account, for Claude Code on the Mac. He reads freely, and asks before anything leaves the house.**
+**A butler for your Google account, built for Claude Code on the Mac. He reads freely, and asks before anything leaves the house.**
 
 Bertie lets Claude Code work in one Google account: Gmail, Calendar, Chat and Drive.
 Claude can search your mail, read a thread, check your diary, draft a reply or fetch a
@@ -75,6 +75,28 @@ Cancel, close the window, or leave it for two minutes, and nothing happens. Ther
 no flag, setting or environment variable that skips steps 2 and 3.
 
 Read [SECURITY.md](SECURITY.md) for what this protects against, and what it does not.
+
+## Using Bertie with other agents
+
+Bertie is built and tested for Claude Code. His commands are ordinary terminal
+commands, though, so any agent that can run them (Codex, Antigravity, Kimi Code and
+others) can use them too, and so can you by hand.
+
+| | Claude Code | Any other agent |
+|---|---|---|
+| The commands | yes | yes |
+| Approval 2: the Mac window | yes | yes |
+| Approval 3: fingerprint or Mac password | yes | yes |
+| Approval 1: the agent's own prompt and safety hook | yes | not yet |
+| Instructions that teach the agent to use Bertie | yes (a skill) | not yet; point your agent at [skill/bertie/SKILL.md](skill/bertie/SKILL.md) |
+
+Approvals 2 and 3 live inside the commands, so nothing goes out without the window
+and your fingerprint, whichever agent asks. The installer only sets up Claude Code
+for now. Support for other agents is planned.
+
+Some agents run commands in a sandbox that blocks the Mac window or the Keychain. If a
+command fails with a Keychain or window error under another agent, that agent's
+sandbox is the likely cause.
 
 ## What you need
 
