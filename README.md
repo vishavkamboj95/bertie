@@ -3,11 +3,13 @@
 [![tests](https://github.com/vishavkamboj95/bertie/actions/workflows/test.yml/badge.svg)](https://github.com/vishavkamboj95/bertie/actions/workflows/test.yml)
 [![license: MIT](https://img.shields.io/github/license/vishavkamboj95/bertie)](LICENSE)
 
-**A butler for your Google account, built for Claude Code on the Mac. He reads freely, and asks before anything leaves the house.**
+**A butler for your Google account, for AI agents on the Mac. He reads freely, and asks before anything leaves the house.**
 
-Bertie lets Claude Code work in one Google account: Gmail, Calendar, Chat and Drive.
-Claude can search your mail, read a thread, check your diary, draft a reply or fetch a
-file without bothering you. But nothing goes out (no email, no invitation, no Chat
+Bertie lets an AI agent work in one Google account: Gmail, Calendar, Chat and Drive.
+It is built and tested for Claude Code, and its commands work from any agent that can
+use the terminal, such as Codex, Antigravity or Kimi Code
+([what works where](#using-bertie-with-other-agents)). The agent can search your mail,
+read a thread, check your diary, draft a reply or fetch a file without bothering you. But nothing goes out (no email, no invitation, no Chat
 message, no shared file) until you have seen exactly what it is and signed for it
 with your fingerprint.
 
