@@ -1,0 +1,62 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    name: pytest (Python ${{ matrix.python }})
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.9", "3.x"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install the pinned packages
+        run: |
+          python -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet --require-hashes --no-deps -r requirements.txt
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet -r requirements-test.txt
+      - name: Run the tests
+        env:
+          TZ: UTC
+        run: |
+          HOME="$(mktemp -d)" "$RUNNER_TEMP/venv/bin/python" -I -m pytest -p no:cacheprovider tests
+
+  helper:
+    name: compile the approval helper
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile (never run) tools/approve.swift
+        run: swiftc -O -o "$RUNNER_TEMP/bertie-approve" tools/approve.swift
+
+  secrets:
+    name: secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: gitleaks (whole history)
+        run: |
+          curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.28.0/gitleaks_8.28.0_linux_x64.tar.gz \
+            | tar -xz -C "$RUNNER_TEMP" gitleaks
+          "$RUNNER_TEMP/gitleaks" git --redact --no-banner --exit-code 1 .
+      - name: No client secrets, tokens or home-folder paths
+        run: |
+          if git ls-files | grep -E '(^|/)(client_secret|token)[^/]*\.json$'; then
+            echo "a client secret or token file is tracked"; exit 1
+          fi
+          if git grep -nIE 'GOCSPX|ya29\.|"refresh_token" *: *"1/|/Use[r]s/[A-Za-z]' -- .; then
+            echo "something that looks like a secret or a home-folder path"; exit 1
+          fi

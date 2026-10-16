@@ -1,0 +1,9 @@
+NOTES.md
+__pycache__/
+*.pyc
+.venv*/
+.pytest_cache/
+# your own Google OAuth client: never commit it
+client_secret*.json
+token*.json
+.DS_Store

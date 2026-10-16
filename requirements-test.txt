@@ -1,0 +1,12 @@
+# Only needed to run the tests (tests/). Exact pins, no hashes.
+colorama==0.4.6 ; sys_platform == 'win32'
+exceptiongroup==1.3.1 ; python_full_version < '3.11'
+iniconfig==2.1.0 ; python_full_version < '3.10'
+iniconfig==2.3.1 ; python_full_version >= '3.10'
+packaging==26.3
+pluggy==1.6.0
+pygments==2.21.0
+pytest==8.4.2 ; python_full_version < '3.10'
+pytest==9.1.1 ; python_full_version >= '3.10'
+tomli==2.5.0 ; python_full_version < '3.11'
+typing-extensions==4.16.0 ; python_full_version < '3.11'
