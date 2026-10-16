@@ -28,7 +28,10 @@ def env_for(home, tmp_path, **extra):
         make_stub_swiftc(tmp_path / "stubbin")
         extra["PATH"] = str(tmp_path / "stubbin") + os.pathsep + os.environ["PATH"]
     env = {"HOME": str(home), "PATH": os.environ["PATH"], "LANG": "C",
-           "UV_CACHE_DIR": str(tmp_path / "uvcache"), "UV_NO_CONFIG": "1"}
+           "UV_CACHE_DIR": str(tmp_path / "uvcache"), "UV_NO_CONFIG": "1",
+           # some CI machines put Rust's rustup shims on PATH, and those write ~/.rustup
+           # into whatever HOME they see; keep that out of the folder being checked
+           "RUSTUP_HOME": str(tmp_path / "rustup")}
     env.update(extra)
     return env
 

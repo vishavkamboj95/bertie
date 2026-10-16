@@ -57,6 +57,6 @@ jobs:
           if git ls-files | grep -E '(^|/)(client_secret|token)[^/]*\.json$'; then
             echo "a client secret or token file is tracked"; exit 1
           fi
-          if git grep -nIE 'GOCSPX|ya29\.|"refresh_token" *: *"1/|/Use[r]s/[A-Za-z]' -- .; then
+          if git grep -nIE 'GOCSP[X]|ya2[9]\.|"refresh_toke[n]" *: *"1/|/Use[r]s/[A-Za-z]' -- .; then
             echo "something that looks like a secret or a home-folder path"; exit 1
           fi
