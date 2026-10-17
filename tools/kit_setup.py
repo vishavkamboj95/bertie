@@ -8,6 +8,8 @@ removes exactly what installing added and restores nothing else):
   * the Claude Code skill
   * permissions.ask rules and the PreToolUse hook in ~/.claude/settings.json
   * the PATH line in ~/.zshrc (only if the installer had to add it)
+  * for any other agent that was asked for (see tools/agents/__init__.py), what
+    its adapter adds, recorded under "agents" in the same manifest
 
 Standard library only. Every function takes the home folder explicitly so the
 tests can run against a temporary one.
@@ -22,10 +24,14 @@ import shutil
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import registry  # noqa: E402
+
+# Run as a script this file is `__main__`. Register it under its own name too, so the adapters
+# (which `import kit_setup`) get this very module, and this very SetupError, not a second copy.
+sys.modules.setdefault("kit_setup", sys.modules[__name__])
 
 MANIFEST_NAME = "install-manifest.json"
 HOOK_COMMAND = 'sh "$HOME/' + registry.INSTALL_REL + '/hook.sh"'
@@ -118,7 +124,8 @@ def _read_settings(path: Path):
     return data, indent, nl, True
 
 
-def _backup(path: Path, manifest: Dict[str, Any]) -> Path:
+def _backup_file(path: Path) -> Path:
+    """Copy `path` to <name>.bertie-backup-<UTC time> beside it; returns the copy."""
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     b = path.with_name(f"{path.name}.{registry.NAME}-backup-{stamp}")
     n = 1
@@ -126,6 +133,11 @@ def _backup(path: Path, manifest: Dict[str, Any]) -> Path:
         b = path.with_name(f"{path.name}.{registry.NAME}-backup-{stamp}-{n}")
         n += 1
     shutil.copy2(str(path), str(b))
+    return b
+
+
+def _backup(path: Path, manifest: Dict[str, Any]) -> Path:
+    b = _backup_file(path)
     manifest.setdefault("settings", {}).setdefault("backups", []).append(b.name)
     return b
 
@@ -367,49 +379,171 @@ def remove_path_line(ctx: Ctx) -> bool:
 
 # ---------------------------------------------------------------- orchestration
 
-def install(ctx: Ctx, kit_dir: Path, add_path: bool) -> List[str]:
+def preflight(ctx: Ctx, kit_dir: Path, agent_keys: Optional[Sequence[str]] = None) -> None:
+    """Every selected adapter's refusals, found before anything is written: a file that is not
+    ours, a link, JSON that does not parse. SetupError names the first one. An adapter
+    without a `preflight(ctx, kit_dir)` has nothing to check up front."""
+    import agents
+    keys = list(dict.fromkeys(agent_keys if agent_keys is not None else ["claude"]))
+    for adapter in [agents.get(k) for k in keys]:
+        check = getattr(adapter, "preflight", None)
+        if check is not None:
+            try:
+                check(ctx, Path(kit_dir))
+            except (OSError, UnicodeDecodeError) as e:
+                raise SetupError(f"{adapter.LABEL}: could not look at its files ({agents.why(e)}). Nothing was changed.")
+
+
+def _install_agent(adapter: Any, ctx: Ctx, kit_dir: Path) -> List[str]:
+    """Run an adapter's install; a failure of the disk or of a file's text (as opposed to a
+    refusal) is reported plainly, not as a traceback. Claude Code's own install is left as it was."""
+    if adapter.KEY == "claude":
+        return adapter.install(ctx, kit_dir)
+    try:
+        return adapter.install(ctx, kit_dir)
+    except (OSError, UnicodeDecodeError) as e:
+        import agents
+        raise SetupError(f"{adapter.LABEL}: could not finish the setup ({agents.why(e)}). "
+                         "Run the installer again once that is fixed; it carries on where it stopped.")
+
+
+def install(ctx: Ctx, kit_dir: Path, add_path: bool, agent_keys: Optional[Sequence[str]] = None,
+            options: Optional[Dict[str, str]] = None) -> List[str]:
+    """Commands, then Claude Code's skill and settings (if selected), the PATH line, then every
+    other selected agent's adapter. `agent_keys` defaults to Claude Code alone; `options` are
+    installer choices for the adapters (for example {"codex_sends": "allow"}). Every selected
+    adapter is looked over first (see preflight), so a refusal leaves nothing half done."""
+    import agents
+    keys = list(dict.fromkeys(agent_keys if agent_keys is not None else ["claude"]))
+    adapters = [agents.get(k) for k in keys]       # an unknown or missing adapter stops everything first
+    if options:
+        agents.set_options(ctx, **options)
+    preflight(ctx, kit_dir, keys)
     msgs: List[str] = []
     msgs += write_wrappers(ctx)
-    install_skill(ctx, kit_dir)
-    msgs.append(f"installed the skill '{registry.NAME}'")
-    changed = merge_settings(ctx)
-    msgs.append("approval rules and safety hook " + ("added to" if changed else "already in")
-                + " ~/.claude/settings.json")
+    for a in adapters:
+        if a.KEY == "claude":
+            msgs += _install_agent(a, ctx, kit_dir)
     if add_path and add_path_line(ctx):
         msgs.append("added ~/.local/bin to PATH in ~/.zshrc")
+    for a in adapters:
+        if a.KEY != "claude":
+            msgs += _install_agent(a, ctx, kit_dir)
     return msgs
+
+
+def _uninstall_other_agents(ctx: Ctx) -> List[str]:
+    """Remove what each recorded non-Claude adapter added. Only what the manifest records
+    is ever touched: an entry for an unknown agent, or one whose adapter is missing, is left
+    as it is and said so."""
+    import agents
+    done: List[str] = []
+    manifest = load_manifest(ctx)
+    edited = agents.edited_files(manifest)
+    for key in agents.recorded_keys(manifest):
+        if key == "claude":
+            continue
+        try:
+            adapter = agents.get(key)
+        except SetupError as e:
+            done.append(f"left the '{key}' entries alone: {e}")
+            continue
+        try:
+            done += adapter.uninstall(ctx)
+        except (SetupError, OSError, ValueError) as e:       # ValueError includes UnicodeDecodeError
+            done.append(f"{adapter.LABEL}: could not remove everything ({e}); left as it is")
+    try:
+        if agents.remove_shared_skill(ctx):
+            done.append(f"removed the shared skill ~/{agents.SHARED_SKILL_REL}")
+    except (SetupError, OSError, ValueError) as e:
+        done.append(f"could not remove the shared skill ({e}); left as it is")
+    if agents.backups_beside(ctx, edited):
+        done.append(f"backups named *.{registry.NAME}-backup-* were left beside the files they belong to")
+    return done
 
 
 def uninstall_local(ctx: Ctx) -> List[str]:
     """Everything except the install folder itself (the caller removes that last)."""
+    import agents
     done: List[str] = []
-    if unmerge_settings(ctx):
-        done.append("removed the approval rules and safety hook from ~/.claude/settings.json")
+    manifest = load_manifest(ctx)
+    # Claude Code is cleaned as it always was (settings, PATH line, commands, skill), unless the
+    # manifest shows a newer install that never set it up: then its files are not ours to touch
+    claude = "settings" in manifest or "agents" not in manifest
+    if claude:
+        done += agents.get("claude").uninstall_settings(ctx)
     if remove_path_line(ctx):
         done.append("removed the PATH line from ~/.zshrc")
     cmds = remove_wrappers(ctx)
     if cmds:
         done.append("removed the commands: " + ", ".join(cmds))
-    if remove_skill(ctx):
-        done.append(f"removed the skill '{registry.NAME}'")
+    if claude:
+        done += agents.get("claude").uninstall_skill(ctx)
+    done += _uninstall_other_agents(ctx)
     return done
 
 
+def leftover_notes(ctx: Ctx) -> List[str]:
+    """Plain steps for finishing by hand, or nothing. Call after uninstall_local: any file that
+    still tells an agent to run this install's hook.sh means the install folder must stay (the
+    agent would look for the hook there and not find it), so these say what to delete and then
+    how to remove the folder."""
+    import agents
+    left = agents.hook_leftovers(ctx)
+    if not left:
+        return []
+    folder = agents.tilde(ctx, ctx.install_dir)
+    lines = [f"Not everything could be taken out, so the install folder {folder} was KEPT. "
+             "These still tell an agent to run its safety hook:"]
+    lines += [f"  {label}: {where}  ({hint})" for label, where, hint in left]
+    lines.append(f"Take those out by hand, then delete the folder {folder} (in Terminal: rm -r {folder}).")
+    return lines
+
+
 def main(argv: Optional[List[str]] = None) -> None:
+    import agents
     ap = argparse.ArgumentParser(prog="kit_setup")
     sub = ap.add_subparsers(dest="cmd", required=True)
     i = sub.add_parser("install")
     i.add_argument("--kit-dir", required=True)
     i.add_argument("--add-path", action="store_true")
+    i.add_argument("--agents", default=None,
+                   help="comma-separated agent keys or 'all' (default: claude plus every agent found)")
+    i.add_argument("--codex-sends", choices=("prompt", "allow"), default=None,
+                   help="what Codex does before a gated send (default: prompt)")
+    r = sub.add_parser("resolve", help="print the agents an install would set up")
+    r.add_argument("--agents", default=None)
+    r.add_argument("--names", action="store_true", help="print their names, not their keys")
+    c = sub.add_parser("check", help="look over what an install would touch; changes nothing")
+    c.add_argument("--kit-dir", required=True)
+    c.add_argument("--agents", default=None)
+    c.add_argument("--codex-sends", choices=("prompt", "allow"), default=None)
     sub.add_parser("uninstall-local")
     args = ap.parse_args(argv)
-    ctx = Ctx(Path(os.path.expanduser("~")), Path(__file__).resolve().parent)
+    home = Path(os.path.expanduser("~"))
+    # check runs from the downloaded folder, before the install folder exists: the install is where it will be
+    ctx = Ctx(home) if args.cmd == "check" else Ctx(home, Path(__file__).resolve().parent)
     try:
+        if args.cmd in ("install", "resolve", "check"):
+            try:
+                keys = (agents.parse_agents(args.agents) if args.agents is not None
+                        else agents.default_selection(ctx.home))
+            except SetupError as e:
+                ap.error(str(e))                    # usage and exit 2, nothing touched
         if args.cmd == "install":
-            for m in install(ctx, Path(args.kit_dir), args.add_path):
+            options = {"codex_sends": args.codex_sends} if args.codex_sends else None
+            for m in install(ctx, Path(args.kit_dir), args.add_path, keys, options):
                 print("  " + m)
+        elif args.cmd == "resolve":
+            print(agents.join_labels(keys) if args.names else ",".join(keys))
+        elif args.cmd == "check":
+            if args.codex_sends:
+                agents.set_options(ctx, codex_sends=args.codex_sends)
+            preflight(ctx, Path(args.kit_dir), keys)
         else:
             for m in uninstall_local(ctx) or ["nothing to remove"]:
+                print("  " + m)
+            for m in leftover_notes(ctx):
                 print("  " + m)
     except SetupError as e:
         print(f"error: {e}", file=sys.stderr)

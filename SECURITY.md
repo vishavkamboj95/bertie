@@ -12,9 +12,10 @@ with your Google account.** For example:
 
 Against that, every action that changes something outside your Mac must pass:
 
-1. **Claude Code's permission prompt.** It is triggered by "ask" rules in
+1. **Your agent's permission prompt.** In Claude Code it is triggered by "ask" rules in
    `~/.claude/settings.json`, and by a PreToolUse hook that reads the whole command
-   text. The hook also asks about the ways round the tools: running their Python files,
+   text. Other agents get their own rules and hook (see the README); where an agent's
+   hook cannot ask, it blocks the ways round instead. The hook also asks about the ways round the tools: running their Python files,
    importing their modules, touching the install folder, the Keychain entry or the
    approval helper, building names at run time, and scripting or clicking the
    confirmation window.
@@ -70,15 +71,15 @@ code already running as you.** Plainly:
 - **The hook sees one command at a time.** A `cd` into the install's command folder in one
   command, then a bare wildcard such as `./??????` in the next, is not linked up. Wildcard
   spellings of a tool name inside a single command do ask.
-- **Skipping Claude Code's prompts switches off step 1.** If you run Claude Code in a
-  mode that skips permission prompts, the rules and the hook do not ask. Steps 2 and 3
+- **Skipping your agent's prompts switches off step 1.** If you run an agent in a
+  mode that skips permission prompts ("yolo", "turbo", "--auto"), the rules and the hook do not ask. Steps 2 and 3
   still apply.
 - **Accessibility or screen-control permission lets a program click the window.** If you
   give the Claude app (or any agent) that permission, a program could click the button
   for you. The fingerprint step still stands, but do not grant that permission for
   this.
 
-These are **accepted residual risks** for version 0.1. The deeper fix would split the
+These are **accepted residual risks** in this version. The deeper fix would split the
 token: keep the write-capable token in a Keychain item protected by
 `SecAccessControl(.userPresence)`, so that even Bertie's own Python could not read it
 without your fingerprint. Whether that works without a signed binary and a
@@ -109,5 +110,5 @@ private advisory. We aim to reply within a week.
 Reports we especially want:
 
 - a way to make a gated action happen without the window and the fingerprint, from
-  inside a Claude Code session;
+  inside an agent session;
 - a way to make the window show something other than what will actually be sent.
