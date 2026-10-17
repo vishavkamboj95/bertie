@@ -580,8 +580,8 @@ def _cwd_folder(cwd: str, command: str) -> Optional[str]:
     matters, else the real folder when only that does (a link to the home folder is the home folder: a
     bare `.cursor` run in it is ~/.cursor). A folder that is not a full path, or cannot be resolved,
     counts as it is: it could be anywhere."""
-    if not cwd.startswith("/"):
-        return cwd
+    if not cwd.startswith("/") or "\x00" in cwd:
+        return cwd                                        # a NUL cannot be looked up (some Pythons skip the check)
     try:
         real = os.path.realpath(cwd)
         norm = os.path.normpath(cwd)
