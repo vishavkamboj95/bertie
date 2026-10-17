@@ -105,6 +105,7 @@ def cmd_check(args) -> None:
 
 
 def cmd_uninstall(args) -> None:
+    import agents
     import auth
     import kit_setup
     install_dir = (Path.home() / registry.INSTALL_REL).resolve()
@@ -114,22 +115,47 @@ def cmd_uninstall(args) -> None:
         die("this removes Bertie from this Mac. Add --yes to go ahead. "
             "The action log lives in the install folder and is deleted with it; "
             "run 'bertie log' first if you want to keep a copy.")
-    common.confirm("Uninstall", "Sign out and REMOVE Bertie from this Mac?", [
-        ("Removes", "the five commands (bertie and bertie-*), the skill, the approval rules and safety hook in "
-                    "~/.claude/settings.json, and the install folder with its action log"),
-        ("Also", "the Google token is revoked and deleted from the Keychain")],
-        reason="uninstall Bertie")
+    ctx = kit_setup.Ctx(Path.home(), common.HOME)
+    rows = [("Removes", "the five commands (bertie and bertie-*), the skill, the approval rules and safety hook in "
+                        "~/.claude/settings.json, and the install folder with its action log"),
+            ("Also", "the Google token is revoked and deleted from the Keychain")]
+    manifest = kit_setup.load_manifest(ctx)
+    edited = agents.edited_files(manifest)                  # named before uninstall_local drops the records
+    others = [k for k in agents.recorded_keys(manifest) if k != "claude"]
+    # look at every agent file first: sign-out cannot be undone, so find out now if one cannot be cleaned
+    problems = agents.uninstall_problems(ctx)
+    if problems:
+        die("nothing was removed and you are still signed in, because Bertie could not clean these files:\n  "
+            + "\n  ".join(problems)
+            + "\nFix them (or take Bertie's lines out by hand), then run this again.")
+    if others:
+        rows.insert(1, ("Also removes", "what the installer set up for " + ", ".join(agents.labels(others))))
+    common.confirm("Uninstall", "Sign out and REMOVE Bertie from this Mac?", rows, reason="uninstall Bertie")
     if not auth._revoke_and_delete(force_local=args.force_local):
         die("sign-out did not complete, so nothing was removed. Fix the problem above, "
             "or use --force-local to delete the Keychain entry anyway.")
-    ctx = kit_setup.Ctx(Path.home(), common.HOME)
     for m in kit_setup.uninstall_local(ctx):
         print(m)
+    notes = kit_setup.leftover_notes(ctx)
+    backups = (f"Settings backups named settings.json.{registry.NAME}-backup-* were left in ~/.claude "
+               "for you to delete when you like.")
+    beside = agents.files_with_backups(ctx, edited)
+    beside_line = (f"Backups named *.{registry.NAME}-backup-* were also left beside the other agents' files: "
+                   + ", ".join(beside) + ".")
+    if notes:                                   # an agent still points at hook.sh: keep the folder that holds it
+        for m in notes:
+            print(m)
+        print(backups)                          # the backups exist whether or not the folder stays
+        if beside:
+            print(beside_line)
+        print("done, apart from the steps above. You are signed out and the commands are gone.")
+        return
     # only the install folder itself: its parent is ~/.config, which is never ours to remove
     shutil.rmtree(str(common.HOME), ignore_errors=True)
     print(f"removed the install folder ~/{registry.INSTALL_REL}")
-    print(f"done. Settings backups named settings.json.{registry.NAME}-backup-* were left in ~/.claude "
-          "for you to delete when you like.")
+    print("done. " + backups)
+    if beside:
+        print(beside_line)
 
 
 def build_parser() -> argparse.ArgumentParser:

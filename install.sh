@@ -1,6 +1,7 @@
 #!/bin/sh
 # Installs Bertie: the bertie-mail, bertie-calendar, bertie-chat and bertie-drive
-# commands, the `bertie` account command, and the Claude Code skill that uses them.
+# commands, the `bertie` account command, and the skill, approval rules and safety hook
+# that make a coding agent (Claude Code by default) use them safely.
 # Safe to run again: it updates the tools and keeps an existing login.
 #
 #   sh install.sh you@example.com --client-secret ~/Downloads/client_secret_XXXX.json
@@ -9,6 +10,11 @@
 # Cloud project (the README walks you through it). It is needed the first time
 # only; a later run keeps the one already installed unless you give a new one.
 #
+# Options:
+#   --agent LIST   which coding agents to set up: claude, antigravity, cursor, codex, kimi
+#                  (comma-separated), or all. Without it: Claude Code, plus every other
+#                  agent whose config folder is already in your home folder.
+#   --codex-sends  prompt (default) or allow: what Codex does before a send. See the README.
 # Options (for testing and repair):
 #   --skip-deps    do not install the Python packages
 #   --skip-login   do not sign in and do not run the final checks
@@ -25,23 +31,39 @@ ENVNAME="$(printf '%s' "$NAME" | tr 'a-z-' 'A-Z_')"
 
 ACCOUNT="$(eval "printf '%s' \"\${${ENVNAME}_ACCOUNT:-}\"")"
 CLIENT=""
+AGENT_ARG=""
+CODEX_SENDS=""
 SKIP_DEPS=0
 SKIP_LOGIN=0
 
 usage() {
-  echo "usage: sh install.sh <email-address> [--client-secret <file>] [--skip-deps] [--skip-login]"
+  echo "usage: sh install.sh <email-address> [--client-secret <file>] [--agent <list>] [--codex-sends prompt|allow] [--skip-deps] [--skip-login]"
   echo "  <email-address>  the Google account the tools will act as."
   echo "  --client-secret  your own OAuth client file (type 'Desktop app'), from Google Cloud."
   echo "                   Needed the first time; see the README, 'Set up your Google project'."
+  echo "  --agent          coding agents to set up: claude, antigravity, cursor, codex, kimi"
+  echo "                   (comma-separated), or all. Default: claude, plus every other agent"
+  echo "                   whose config folder is in your home folder."
+  echo "  --codex-sends    prompt (default) or allow: whether Codex asks before a send."
 }
 
 WANT_CLIENT=0
 GAVE_CLIENT=0
+WANT_AGENT=0
+GAVE_AGENT=0
+WANT_SENDS=0
+GAVE_SENDS=0
 for arg in "$@"; do
   if [ "$WANT_CLIENT" = 1 ]; then CLIENT="$arg"; WANT_CLIENT=0; continue; fi
+  if [ "$WANT_AGENT" = 1 ]; then AGENT_ARG="$arg"; WANT_AGENT=0; continue; fi
+  if [ "$WANT_SENDS" = 1 ]; then CODEX_SENDS="$arg"; WANT_SENDS=0; continue; fi
   case "$arg" in
     --client-secret)   WANT_CLIENT=1; GAVE_CLIENT=1 ;;
     --client-secret=*) CLIENT="${arg#--client-secret=}"; GAVE_CLIENT=1 ;;
+    --agent)           WANT_AGENT=1; GAVE_AGENT=1 ;;
+    --agent=*)         AGENT_ARG="${arg#--agent=}"; GAVE_AGENT=1 ;;
+    --codex-sends)     WANT_SENDS=1; GAVE_SENDS=1 ;;
+    --codex-sends=*)   CODEX_SENDS="${arg#--codex-sends=}"; GAVE_SENDS=1 ;;
     --skip-deps)  SKIP_DEPS=1 ;;
     --skip-login) SKIP_LOGIN=1 ;;
     -h|--help)    usage; exit 0 ;;
@@ -52,6 +74,39 @@ done
 if [ "$WANT_CLIENT" = 1 ] || { [ "$GAVE_CLIENT" = 1 ] && [ -z "$CLIENT" ]; }; then
   echo "--client-secret needs a file name after it"; usage; exit 2
 fi
+if [ "$WANT_AGENT" = 1 ] || { [ "$GAVE_AGENT" = 1 ] && [ -z "$AGENT_ARG" ]; }; then
+  echo "--agent needs a list after it, e.g. --agent claude,kimi (or all)"; usage; exit 2
+fi
+if [ "$GAVE_AGENT" = 1 ]; then
+  case "$AGENT_ARG" in
+    ,*|*,|*,,*) echo "--agent takes a list like claude,kimi with nothing empty in it: '$AGENT_ARG'"; usage; exit 2 ;;
+  esac
+  # every item must be a known key (no pattern expansion of the list)
+  set -f
+  OLDIFS="$IFS"; IFS=','
+  for item in $AGENT_ARG; do
+    case "$item" in
+      all|claude|antigravity|cursor|codex|kimi) ;;
+      *) IFS="$OLDIFS"; set +f
+         echo "unknown agent: '$item' (choose from claude, antigravity, cursor, codex, kimi, or all)"; usage; exit 2 ;;
+    esac
+  done
+  IFS="$OLDIFS"; set +f
+  # and each one asked for must be in this copy of the kit, before anything is touched
+  case ",$AGENT_ARG," in *,all,*) WANTED="claude antigravity cursor codex kimi" ;; *) WANTED="$(echo "$AGENT_ARG" | tr ',' ' ')" ;; esac
+  for item in $WANTED; do
+    if [ ! -f "$HERE/tools/agents/$item.py" ]; then
+      echo "The $item adapter is missing from this copy (tools/agents/$item.py). Download the setup folder again."; exit 1
+    fi
+  done
+fi
+if [ "$WANT_SENDS" = 1 ] || { [ "$GAVE_SENDS" = 1 ] && [ -z "$CODEX_SENDS" ]; }; then
+  echo "--codex-sends needs prompt or allow after it"; usage; exit 2
+fi
+case "$CODEX_SENDS" in
+  ""|prompt|allow) ;;
+  *) echo "--codex-sends must be prompt or allow, not '$CODEX_SENDS'"; usage; exit 2 ;;
+esac
 
 case "$ACCOUNT" in
   "")  echo "Which account? Give the email address, e.g.  sh install.sh you@example.com"; usage; exit 2 ;;
@@ -114,9 +169,32 @@ if [ -e "$DEST" ] && [ ! -e "$MARK" ] && [ ! -e "$DEST/install-manifest.json" ];
   exit 1
 fi
 SKILLMD="$HOME/.claude/skills/$NAME/SKILL.md"
-if [ -e "$SKILLMD" ] && ! grep -q "^name: $NAME\$" "$SKILLMD"; then
+# Claude Code is set up unless --agent names others only
+case ",$AGENT_ARG," in
+  ,,|*,claude,*|*,all,*) CLAUDE=1 ;;
+  *) CLAUDE=0 ;;
+esac
+if [ "$CLAUDE" = 1 ] && [ -e "$SKILLMD" ] && ! grep -q "^name: $NAME\$" "$SKILLMD"; then
   echo "$SKILLMD already exists and is not this tool's skill. Move it out of the way and run this again."
   exit 1
+fi
+
+# Look over every agent file first (links, files that are not ours, JSON that does not parse), so a
+# problem is found before anything is copied or written, not halfway through.
+CHECK_PY=""
+if [ -x "$PY" ]; then
+  CHECK_PY="$PY"
+elif command -v python3 >/dev/null 2>&1 && python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)' >/dev/null 2>&1; then
+  CHECK_PY="python3"
+fi
+if [ -n "$CHECK_PY" ]; then
+  set -- --kit-dir "$HERE"
+  if [ -n "$AGENT_ARG" ]; then set -- "$@" --agents "$AGENT_ARG"; fi
+  if [ -n "$CODEX_SENDS" ]; then set -- "$@" --codex-sends "$CODEX_SENDS"; fi
+  if ! "$CHECK_PY" -I "$HERE/tools/kit_setup.py" check "$@"; then
+    echo "Nothing was installed or changed."
+    exit 1
+  fi
 fi
 
 say "Installing Bertie for $ACCOUNT into ~/.config/$NAME"
@@ -124,8 +202,10 @@ mkdir -p "$DEST" "$BIN"
 : > "$MARK"
 chmod 700 "$DEST"
 # An earlier run left these read-only; remove them so the new copies replace them.
-rm -f "$DEST"/*.py "$DEST/hook.sh" "$DEST/approve.swift" "$DEST/requirements.txt"
+rm -f "$DEST"/*.py "$DEST"/agents/*.py "$DEST/hook.sh" "$DEST/approve.swift" "$DEST/requirements.txt"
+mkdir -p "$DEST/agents"
 cp "$HERE"/tools/*.py "$HERE/tools/hook.sh" "$HERE/tools/approve.swift" "$HERE/requirements.txt" "$DEST/"
+cp "$HERE"/tools/agents/*.py "$DEST/agents/"
 if [ -n "$CLIENT" ]; then
   # copy beside it, then swap in, so giving the installed file itself is harmless
   cp "$CLIENT" "$DEST/client_secret.json.new"
@@ -133,7 +213,7 @@ if [ -n "$CLIENT" ]; then
   mv "$DEST/client_secret.json.new" "$DEST/client_secret.json"
 fi
 # read-only: a small speed bump against casual edits (the owner can still change them)
-chmod 400 "$DEST"/*.py "$DEST/client_secret.json" "$DEST/requirements.txt" "$DEST/approve.swift"
+chmod 400 "$DEST"/*.py "$DEST"/agents/*.py "$DEST/client_secret.json" "$DEST/requirements.txt" "$DEST/approve.swift"
 chmod 500 "$DEST/hook.sh"
 printf '%s\n' "$ACCOUNT" > "$DEST/account"
 chmod 600 "$DEST/account"
@@ -187,13 +267,20 @@ else
 fi
 
 say "Adding the commands, the skill, the approval rules and the safety hook"
-ADDPATH=""
+# which agents: the ones asked for, or Claude Code plus every other agent found in the home folder
+if [ -n "$AGENT_ARG" ]; then
+  AGENTS="$("$PY" -I "$DEST/kit_setup.py" resolve --agents "$AGENT_ARG")"
+else
+  AGENTS="$("$PY" -I "$DEST/kit_setup.py" resolve)"
+fi
+NAMES="$("$PY" -I "$DEST/kit_setup.py" resolve --agents "$AGENTS" --names)"
+set -- --kit-dir "$HERE" --agents "$AGENTS"
 case ":$PATH:" in
   *":$BIN:"*) ;;
-  *) ADDPATH="--add-path" ;;
+  *) set -- "$@" --add-path ;;
 esac
-# shellcheck disable=SC2086
-"$PY" -I "$DEST/kit_setup.py" install --kit-dir "$HERE" $ADDPATH
+if [ -n "$CODEX_SENDS" ]; then set -- "$@" --codex-sends "$CODEX_SENDS"; fi
+"$PY" -I "$DEST/kit_setup.py" install "$@"
 PATH="$BIN:$PATH"; export PATH
 
 if [ "$SKIP_LOGIN" = 1 ]; then
@@ -226,5 +313,5 @@ if [ "$HELPER_OK" = 0 ]; then
   echo "Run:  xcode-select --install     then run this installer again."
 fi
 
-say "Done. Open a NEW terminal, start Claude Code, and say:"
+say "Done. Open a NEW terminal, start $NAMES, and say:"
 echo '    "Bertie, what is on my calendar today?"'

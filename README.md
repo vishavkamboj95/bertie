@@ -6,18 +6,17 @@
 **A butler for your Google account, for AI agents on the Mac. He reads freely, and asks before anything leaves the house.**
 
 Bertie lets an AI agent work in one Google account: Gmail, Calendar, Chat and Drive.
-It is built and tested for Claude Code, and its commands work from any agent that can
-use the terminal, such as Codex, Antigravity or Kimi Code
-([what works where](#using-bertie-with-other-agents)). The agent can search your mail,
-read a thread, check your diary, draft a reply or fetch a file without bothering you. But nothing goes out (no email, no invitation, no Chat
-message, no shared file) until you have seen exactly what it is and signed for it
-with your fingerprint.
+He works with Claude Code, Antigravity, Cursor, Codex and Kimi Code on the Mac
+([what works where](#which-agents-and-what-each-one-gets)). The agent can search your
+mail, read a thread, check your diary, draft a reply or fetch a file without bothering
+you. But nothing goes out (no email, no invitation, no Chat message, no shared file)
+until you have seen exactly what it is and signed for it with your fingerprint.
 
 ```
 sh install.sh you@example.com --client-secret ~/Downloads/client_secret_XXXX.json
 ```
 
-Then, in Claude Code: *"Bertie, what is on my calendar today?"*
+Then, in your agent: *"Bertie, what is on my calendar today?"*
 
 macOS only. You bring your own Google Cloud project (about 10 minutes, once); the
 steps are under [Set up your Google project](#set-up-your-google-project).
@@ -40,7 +39,7 @@ Bertie is a discreet, unflappable English butler. He keeps to a few house rules:
 - **He speaks plainly when it matters.** The manners are for everyday replies. Errors,
   refusals and warnings are said straight, in full.
 
-Inside Claude Code, Bertie is a skill: Claude picks him up whenever a task touches your
+In each agent, Bertie is a skill: the agent picks him up whenever a task touches your
 mail, calendar, Chat or Drive, or when you address him by name.
 
 ## What he does freely, and what he asks first
@@ -54,17 +53,18 @@ mail, calendar, Chat or Drive, or when you address him by name.
 | Account (`bertie`) | `login`, `whoami`, `log`, `check` | `logout`, `uninstall` |
 
 Every command that changes something also has `--dry-run`, which prints exactly what
-would happen, does nothing, and shows no window. Bertie's skill tells Claude to run
+would happen, does nothing, and shows no window. Bertie's skill tells the agent to run
 that first and show you the result before the real command.
 
 ## The three approvals
 
 Every action in the "asks first" column passes three checks, in this order:
 
-1. **Claude Code's own prompt.** The installer adds an "ask" rule for each of those
-   actions, and a safety hook that reads the whole command (any letter case, after
+1. **Your agent's own prompt.** The installer adds an "ask" rule for each of those
+   actions where the agent has a rules file, and a safety hook that reads the whole command (any letter case, after
    `&&` or `|`, inside `$(...)` or `sh -c`, behind redirections, through `xargs`) and
-   asks whenever it sees one, or sees a way round the tools.
+   asks whenever it sees one, or sees a way round the tools. Some agents' hooks cannot
+   ask; they block the ways round instead. See the table below.
 2. **A Mac window titled "Bertie asks first".** It lists the account, every recipient,
    attendee, share target and attachment in full, and a preview of the text. Cancel is
    the default. The other button carries a fresh random number each time
@@ -78,32 +78,61 @@ no flag, setting or environment variable that skips steps 2 and 3.
 
 Read [SECURITY.md](SECURITY.md) for what this protects against, and what it does not.
 
-## Using Bertie with other agents
+## Which agents, and what each one gets
 
-Bertie is built and tested for Claude Code. His commands are ordinary terminal
-commands, though, so any agent that can run them (Codex, Antigravity, Kimi Code and
-others) can use them too, and so can you by hand.
+Approvals 2 and 3 live inside the commands, so every agent gets them. What differs is
+approval 1, the agent's own prompt.
 
-| | Claude Code | Any other agent |
-|---|---|---|
-| The commands | yes | yes |
-| Approval 2: the Mac window | yes | yes |
-| Approval 3: fingerprint or Mac password | yes | yes |
-| Approval 1: the agent's own prompt and safety hook | yes | not yet |
-| Instructions that teach the agent to use Bertie | yes (a skill) | not yet; point your agent at [skill/bertie/SKILL.md](skill/bertie/SKILL.md) |
+| | Instructions (skill) | Agent's own prompt before a send (approval 1) | Safety hook | Mac window | Touch ID | Hand-tested |
+|---|---|---|---|---|---|---|
+| Claude Code | yes | yes (ask rules, and the hook asks) | asks | yes | yes | yes |
+| Antigravity | yes (App, IDE and CLI) | yes (the hook forces a prompt; the CLI also gets ask rules) | asks | yes | yes | not yet hand-tested |
+| Cursor | yes | yes (the hook asks; Cursor has no rules file) | asks | yes | yes | not yet hand-tested |
+| Codex | yes | yes, from Codex rules (not with `--codex-sends allow`, see below) | blocks the ways round (cannot ask) | yes | yes | not yet hand-tested |
+| Kimi Code | yes | **no** | blocks the ways round (cannot ask) | yes | yes | not yet hand-tested |
 
-Approvals 2 and 3 live inside the commands, so nothing goes out without the window
-and your fingerprint, whichever agent asks. The installer only sets up Claude Code
-for now. Support for other agents is planned.
+The four agents other than Claude Code are set up from their official documentation and
+covered by automated tests, but not yet tried by hand.
 
-Some agents run commands in a sandbox that blocks the Mac window or the Keychain. If a
-command fails with a Keychain or window error under another agent, that agent's
-sandbox is the likely cause.
+**Kimi Code** does not yet apply ask rules from its settings, so Kimi itself does not
+ask before a send. In its default mode it asks before every command. The Mac window and
+Touch ID guard every send, and the safety hook blocks the ways round them.
+
+**Codex** asks through its own rules. If you install with `--codex-sends allow`, Codex
+does not ask before a send, and only the Mac window and Touch ID remain. That option
+exists because Codex runs commands in a sandbox, which may block the Keychain or the Mac
+window. If a command fails with a
+Keychain or window error under any agent, that agent's sandbox is the likely cause.
+
+**Skip-prompts modes.** In an agent's "yolo", "turbo", "--auto" or skip-prompts mode,
+the agent asks nothing. Only the Mac window and Touch ID remain. This is the same as
+Claude Code's skip-prompts mode, and it is why those two steps cannot be turned off.
+
+### Setting up each agent
+
+The installer puts the skill and the safety hook where each agent looks for them.
+
+- **Claude Code.** The skill in `~/.claude/skills/bertie`. The ask rules and the hook
+  in `~/.claude/settings.json`. Start a new session.
+- **Antigravity.** The skill in `~/.gemini/config/skills` (App and IDE) and
+  `~/.gemini/antigravity-cli/skills` (CLI). The hook in `~/.gemini/config/hooks.json`.
+  Ask rules go into `~/.gemini/antigravity-cli/settings.json` only if the CLI is already
+  installed; run the installer again after installing it. Start a new session.
+- **Cursor.** The skill in `~/.agents/skills/bertie`. The hook in `~/.cursor/hooks.json`.
+  Restart Cursor.
+- **Codex.** The skill in `~/.agents/skills/bertie`. The rules in
+  `~/.codex/rules/bertie.rules`. The hook in `~/.codex/hooks.json`. Open Codex and run
+  `/hooks` to trust Bertie's hook; Codex skips it until you do.
+- **Kimi Code.** The skill in `~/.agents/skills/bertie`. One marked block in
+  `~/.kimi-code/config.toml`, or in the config in the folder named by `KIMI_CODE_HOME`
+  if you set it. It goes above the file's first section, so add your own settings
+  outside it. Kimi must have made that file already: start Kimi once, then run the
+  installer. Start a new session. The Kimi desktop app is not covered.
 
 ## What you need
 
 - **A Mac** running macOS 12 or later, with Touch ID or a login password.
-- **Claude Code.**
+- **One of the supported agents:** Claude Code, Antigravity, Cursor, Codex or Kimi Code.
 - **The Mac developer tools**, to build the fingerprint helper. If you do not have
   them, run `xcode-select --install`.
 - **A Google account.** A Google Workspace account (your company's) works best:
@@ -177,27 +206,38 @@ cd bertie
 sh install.sh you@example.com --client-secret ~/Downloads/client_secret_XXXX.json
 ```
 
+Which agents it sets up:
+
+- **By default:** Claude Code always, plus every other agent whose settings folder it
+  finds in your home folder.
+- **`--agent claude,kimi`:** exactly the agents you list. Choose from `claude`,
+  `antigravity`, `cursor`, `codex` and `kimi`, or write `--agent all`.
+- **`--codex-sends prompt|allow`:** whether Codex asks before a send. `prompt` is the
+  default. See [the table](#which-agents-and-what-each-one-gets) for when `allow` is
+  needed.
+
 The installer:
 
 1. Copies the tools to `~/.config/bertie` and makes them read-only.
 2. Builds a private Python environment, with exact, hash-checked package versions.
 3. Builds the fingerprint helper on your Mac.
 4. Adds five commands to `~/.local/bin`.
-5. Adds the Bertie skill to `~/.claude/skills/bertie`.
-6. Merges the approval rules and the safety hook into `~/.claude/settings.json`. It makes
-   a dated backup first and keeps everything already there.
+5. Adds the Bertie skill for each agent you chose.
+6. Merges the approval rules and the safety hook into each agent's settings, as
+   described under [Setting up each agent](#setting-up-each-agent). It makes a dated
+   backup first and keeps everything already there.
 7. Opens your browser once: choose your account and tick **every** box. If any box is
    left unticked, nothing is saved, and you run `bertie login` again.
 8. Finishes with `bertie check`, a small read on every service. If a service is not
    switched on in your Google project, it says so in plain words.
 
-Then open a **new** terminal window and start Claude Code. You can run the installer
+Then open a **new** terminal window and start your agent. You can run the installer
 again at any time. It repairs the setup and keeps your sign-in, and you only need
 `--client-secret` again if you want to switch to a different client.
 
 ## Everyday use
 
-Talk to Claude as you would to a butler:
+Talk to your agent as you would to a butler:
 
 - *"Bertie, anything urgent in my inbox this morning?"*
 - *"Search my mail for the signed contract from Acme and summarise it."*
@@ -211,7 +251,7 @@ in it.
 
 ## Commands
 
-You rarely type these yourself; Claude does. They are here so you know what he can do.
+You rarely type these yourself; your agent does. They are here so you know what he can do.
 
 ```
 bertie whoami | log [-n 50] | check | login | logout | uninstall --yes
@@ -284,11 +324,13 @@ file. The OAuth client file you downloaded lives in `~/.config/bertie`, read-onl
   - the five commands
   - the skill
   - the approval rules and the hook in `~/.claude/settings.json`
+  - for each other agent, the skill, rules and hook that were added for it
   - the PATH line, if the installer added one
   - `~/.config/bertie`, which also holds the action log (run `bertie log` first if you
     want a copy)
 
-  Nothing else is touched. Backups of your settings file are left in `~/.claude` for you
+  If an agent's file cannot be cleaned, Bertie stops and says which lines to remove by
+  hand. Nothing else is touched. Backups of your settings files are left beside them for you
   to delete when you like, and an empty `~/.config` folder stays if the installer made it.
 
 ## Troubleshooting

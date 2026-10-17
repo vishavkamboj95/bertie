@@ -79,6 +79,8 @@ def isolated_world(tmp_path, monkeypatch):
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
+    # Kimi's adapter honours this, so a developer's own setting must never steer a test to a real folder
+    monkeypatch.delenv("KIMI_CODE_HOME", raising=False)
     # every time assertion is written for Asia/Kolkata (IST), whatever zone the test Mac is in
     monkeypatch.setattr(common, "ZONE_NAME", "Asia/Kolkata")
     import keyring
